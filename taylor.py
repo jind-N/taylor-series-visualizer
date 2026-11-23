@@ -1,12 +1,12 @@
 from itertools import product
 from math import factorial
 
+import numpy as np
 import sympy as sp
 
 
 def taylor_polynomial(function, variables, center, degree):
     """Return the Taylor polynomial up to the given total degree."""
-
     variables = tuple(variables)
     center = tuple(center)
 
@@ -21,32 +21,27 @@ def taylor_polynomial(function, variables, center, degree):
 
     polynomial = 0
 
-    # Each tuple represents derivative orders.
-    # For (x, y), (1, 2) means once in x and twice in y.
+    # Combinations of derivative orders, e.g. (1, 2) -> once in x, twice in y
     for orders in product(range(degree + 1), repeat=len(variables)):
-
         if sum(orders) > degree:
             continue
 
         derivative = function
-
         for variable, order in zip(variables, orders):
             derivative = sp.diff(derivative, variable, order)
 
         value_at_center = derivative.subs(
-            dict(zip(variables, center))
+            dict(zip(variables, center)), simultaneous=True
         )
 
-        if value_at_center.is_finite is not True:
+        evaluated = value_at_center.evalf()
+        if evaluated.is_finite is not True or evaluated.is_real is not True:
             raise ValueError(
-                "A required derivative is undefined at the center."
+                "A required derivative is undefined or non-real at the center."
             )
 
         term = value_at_center
-
-        for variable, center_value, order in zip(
-            variables, center, orders
-        ):
+        for variable, center_value, order in zip(variables, center, orders):
             term *= (variable - center_value) ** order
             term /= factorial(order)
 
@@ -55,20 +50,19 @@ def taylor_polynomial(function, variables, center, degree):
     return sp.expand(polynomial)
 
 
-# Examples to run when we execute this file
-if __name__ == "__main__":
-    x, y = sp.symbols("x y")
+def matches_sympy_series_1d(function, variable, center_val, degree):
+    """Check our 1D Taylor polynomial against SymPy's built-in series()."""
+    try:
+        ours = taylor_polynomial(function, (variable,), (center_val,), degree)
+        reference = sp.series(function, variable, center_val, degree + 1).removeO()
 
-    one_variable = taylor_polynomial(
-        sp.exp(x), (x,), (0,), 2
-    )
+        # Check values numerically across a small window near the center
+        sample = np.linspace(float(center_val) - 0.5, float(center_val) + 0.5, 25)
+        f_ours = sp.lambdify(variable, ours, "numpy")
+        f_ref = sp.lambdify(variable, reference, "numpy")
 
-    two_variables = taylor_polynomial(
-        sp.exp(x + y), (x, y), (0, 0), 2
-    )
-
-    print("exp(x), degree 2:")
-    print(one_variable)
-
-    print("\nexp(x + y), degree 2:")
-    print(two_variables)
+        vals_ours = np.broadcast_to(np.asarray(f_ours(sample), dtype=float), sample.shape)
+        vals_ref = np.broadcast_to(np.asarray(f_ref(sample), dtype=float), sample.shape)
+        return bool(np.allclose(vals_ours, vals_ref, atol=1e-7))
+    except Exception:
+        return False
